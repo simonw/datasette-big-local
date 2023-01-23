@@ -43,7 +43,7 @@ class OpenError(Exception):
     pass
 
 
-def open_project_file(project_id, filename, jwt):
+def open_project_file(project_id, filename, remember_token):
     graphql_endpoint = "https://api.biglocalnews.org/graphql"
     body = {
         "operationName": "CreateFileDownloadURI",
@@ -70,11 +70,11 @@ def open_project_file(project_id, filename, jwt):
     response = httpx.post(
         graphql_endpoint,
         json=body,
-        headers={"Authorization": "JWT {}".format(jwt)},
+        cookies={"remember_token": remember_token},
         timeout=30,
     )
     if response.status_code != 200:
-        raise OpenError(response.body)
+        raise OpenError(response.text)
     data = response.json()["data"]
     if data["createFileDownloadUri"]["err"]:
         raise OpenError(data["createFileDownloadUri"]["err"])
@@ -98,25 +98,29 @@ async def open_big_local(request, datasette):
         <form action="/-/open-big-local" method="POST">
             <p><label>Project ID: <input name="project_id" value="UHJvamVjdDpmZjAxNTBjNi1iNjM0LTQ3MmEtODFiMi1lZjJlMGMwMWQyMjQ="></label></p>
             <p><label>Filename: <input name="filename" value="universities_final.csv"></label></p>
-            <p><label>JWT: <input name="jwt" value="***REMOVED***"></label></p>
+            <p><label>remember_token: <input name="remember_token" value="***REMOVED***"></label></p>
             <p><input type="submit"></p>
         </form>
-        """)
+        """
+        )
     post = await request.post_vars()
     print(post)
-    bad_keys = [key for key in ("filename", "project_id", "jwt") if not post.get(key)]
+    bad_keys = [
+        key for key in ("filename", "project_id", "remember_token") if not post.get(key)
+    ]
     if bad_keys:
         return Response.html(
-            "filename, project_id and jwt POST variables are required", status=400
+            "filename, project_id and remember_token POST variables are required",
+            status=400,
         )
 
     filename = post["filename"]
     project_id = post["project_id"]
-    jwt = post["jwt"]
+    remember_token = post["remember_token"]
 
     # Use GraphQL to check permissions and get the signed URL for this resource
     try:
-        uri, etag, length = open_project_file(project_id, filename, jwt)
+        uri, etag, length = open_project_file(project_id, filename, remember_token)
     except OpenError as e:
         return Response.html(
             "Could not open file: {}".format(html.escape(str(e))), status=400
@@ -132,12 +136,10 @@ async def open_big_local(request, datasette):
         db = datasette.get_database(project_uuid)
     except KeyError:
         # Create empty file
-        sqlite_utils.Database(  "{}.db".format(project_uuid)).vacuum()
-        db = datasette.add_database(Database(
-            datasette,
-            path="{}.db".format(project_uuid),
-            is_mutable=True
-        ))
+        sqlite_utils.Database("{}.db".format(project_uuid)).vacuum()
+        db = datasette.add_database(
+            Database(datasette, path="{}.db".format(project_uuid), is_mutable=True)
+        )
     # uri is valid, do we have the table already?
     table_name = alnum_encode(filename)
 
