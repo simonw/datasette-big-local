@@ -167,10 +167,10 @@ async def big_local_open(request, datasette):
     if request.method == "GET":
         return Response.html(
             """
-        <form action="/-/open-big-local" method="POST">
+        <form action="/-/big-local-open" method="POST">
             <p><label>Project ID: <input name="project_id" value="UHJvamVjdDpmZjAxNTBjNi1iNjM0LTQ3MmEtODFiMi1lZjJlMGMwMWQyMjQ="></label></p>
             <p><label>Filename: <input name="filename" value="universities_final.csv"></label></p>
-            <p><label>remember_token: <input name="remember_token" value="***REMOVED***"></label></p>
+            <p><label>remember_token: <input name="remember_token" value=""></label></p>
             <p><input type="submit"></p>
         </form>
         """
