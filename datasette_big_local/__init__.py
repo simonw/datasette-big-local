@@ -114,7 +114,7 @@ class OpenError(Exception):
     pass
 
 
-def open_project_file(project_id, filename, remember_token):
+async def open_project_file(project_id, filename, remember_token):
     graphql_endpoint = "https://api.biglocalnews.org/graphql"
     body = {
         "operationName": "CreateFileDownloadURI",
@@ -138,23 +138,24 @@ def open_project_file(project_id, filename, remember_token):
         }
         """,
     }
-    response = httpx.post(
-        graphql_endpoint,
-        json=body,
-        cookies={"remember_token": remember_token},
-        timeout=30,
-    )
-    if response.status_code != 200:
-        raise OpenError(response.text)
-    data = response.json()["data"]
-    if data["createFileDownloadUri"]["err"]:
-        raise OpenError(data["createFileDownloadUri"]["err"])
-    # We need to do a HEAD request because the GraphQL endpoint doesn't
-    # check if the file exists, it just signs whatever filename we sent
-    uri = data["createFileDownloadUri"]["ok"]["uri"]
-    head_response = httpx.head(uri)
-    if head_response.status_code != 200:
-        raise OpenError("File not found")
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            graphql_endpoint,
+            json=body,
+            cookies={"remember_token": remember_token},
+            timeout=30,
+        )
+        if response.status_code != 200:
+            raise OpenError(response.text)
+        data = response.json()["data"]
+        if data["createFileDownloadUri"]["err"]:
+            raise OpenError(data["createFileDownloadUri"]["err"])
+        # We need to do a HEAD request because the GraphQL endpoint doesn't
+        # check if the file exists, it just signs whatever filename we sent
+        uri = data["createFileDownloadUri"]["ok"]["uri"]
+        head_response = await client.head(uri)
+        if head_response.status_code != 200:
+            raise OpenError("File not found")
     return (
         uri,
         head_response.headers["etag"],
@@ -194,7 +195,9 @@ async def big_local_open(request, datasette):
 
     # Use GraphQL to check permissions and get the signed URL for this resource
     try:
-        uri, etag, length = open_project_file(project_id, filename, remember_token)
+        uri, etag, length = await open_project_file(
+            project_id, filename, remember_token
+        )
     except OpenError as e:
         return Response.html(
             "Could not open file: {}".format(html.escape(str(e))), status=400
