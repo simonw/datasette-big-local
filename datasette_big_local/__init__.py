@@ -16,7 +16,6 @@ import re
 
 ALLOWED = "abcdefghijklmnopqrstuvwxyz" "ABCDEFGHIJKLMNOPQRSTUVWXYZ" "0123456789"
 split_re = re.compile("(_[0-9a-f]+_)")
-permissions_cache = TTLCache(1000, ttl=60 * 5)
 
 
 @hookimpl
@@ -26,6 +25,10 @@ def forbidden(request, message):
 
 @hookimpl
 def permission_allowed(datasette, actor, action, resource):
+    cache = getattr(datasette, "big_local_cache", None)
+    if cache is None:
+        datasette.big_local_cache = cache = TTLCache(maxsize=100, ttl=60 * 5)
+
     async def inner():
         if action not in ("view-database", "execute-sql"):
             # No opinion
@@ -39,7 +42,7 @@ def permission_allowed(datasette, actor, action, resource):
         database_name = resource
         # Check cache to see if actor is allowed to access this database
         key = (actor_id, database_name)
-        result = permissions_cache.get(key)
+        result = cache.get(key)
         if result is not None:
             print("From cache for {}: {}".format(key, result))
             return result
@@ -79,7 +82,7 @@ def permission_allowed(datasette, actor, action, resource):
             data = response.json()["data"]
             result = data["node"] is not None
         # Store in cache
-        permissions_cache[key] = result
+        cache[key] = result
         return result
 
     return inner

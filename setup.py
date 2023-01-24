@@ -29,7 +29,7 @@ setup(
     packages=["datasette_big_local"],
     entry_points={"datasette": ["big_local = datasette_big_local"]},
     install_requires=["datasette", "cachetools", "sqlite-utils"],
-    extras_require={"test": ["pytest", "pytest-asyncio"]},
+    extras_require={"test": ["pytest", "pytest-asyncio", "pytest-httpx"]},
     package_data={
         "datasette_big_local": [
             "templates/*.html",
