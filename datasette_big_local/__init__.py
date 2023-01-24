@@ -1,6 +1,7 @@
 import graphlib
 from http import cookies
 from time import time
+from cachetools import TTLCache
 from datasette import hookimpl
 from datasette.database import Database
 from datasette.utils.asgi import Response
@@ -15,11 +16,73 @@ import re
 
 ALLOWED = "abcdefghijklmnopqrstuvwxyz" "ABCDEFGHIJKLMNOPQRSTUVWXYZ" "0123456789"
 split_re = re.compile("(_[0-9a-f]+_)")
+permissions_cache = TTLCache(1000, ttl=60 * 5)
 
 
 @hookimpl
 def forbidden(request, message):
     return Response.redirect("/-/big-local-login?=" + urlencode({"message": message}))
+
+
+@hookimpl
+def permission_allowed(datasette, actor, action, resource):
+    async def inner():
+        if action not in ("view-database", "execute-sql"):
+            # No opinion
+            return
+        if resource.startswith("_"):
+            # _internal / _memory etc
+            return
+        if not actor:
+            return False
+        actor_id = actor["id"]
+        database_name = resource
+        # Check cache to see if actor is allowed to access this database
+        key = (actor_id, database_name)
+        result = permissions_cache.get(key)
+        if result is not None:
+            print("From cache for {}: {}".format(key, result))
+            return result
+        # Not cached - hit GraphQL API and cache the result
+        print("Not cached for {}".format(key))
+        remember_token = actor["token"]
+
+        # Figure out project ID from UUID database name
+        project_id = base64.b64encode(
+            "Project:{}".format(database_name).encode("utf-8")
+        ).decode("utf-8")
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://api.biglocalnews.org/graphql",
+                json={
+                    "variables": {"id": project_id},
+                    "query": """
+                    query Node($id: ID!) {
+                        node(id: $id) {
+                            ... on Project {
+                            id
+                            name
+                            __typename
+                            }
+                            __typename
+                        }
+                    }
+                    """,
+                },
+                cookies={"remember_token": remember_token},
+                timeout=30,
+            )
+            print(response, response.text)
+        if response.status_code != 200:
+            result = False
+        else:
+            data = response.json()["data"]
+            result = data["node"] is not None
+        # Store in cache
+        permissions_cache[key] = result
+        return result
+
+    return inner
 
 
 def alnum_encode(s):
