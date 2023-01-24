@@ -1,3 +1,6 @@
+import graphlib
+from http import cookies
+from time import time
 from datasette import hookimpl
 from datasette.database import Database
 from datasette.utils.asgi import Response
@@ -7,12 +10,16 @@ import httpx
 import csv
 import sqlite_utils
 from sqlite_utils.utils import TypeTracker
-
-
+from urllib.parse import urlencode
 import re
 
 ALLOWED = "abcdefghijklmnopqrstuvwxyz" "ABCDEFGHIJKLMNOPQRSTUVWXYZ" "0123456789"
 split_re = re.compile("(_[0-9a-f]+_)")
+
+
+@hookimpl
+def forbidden(request, message):
+    return Response.redirect("/-/big-local-login?=" + urlencode({"message": message}))
 
 
 def alnum_encode(s):
@@ -173,9 +180,62 @@ async def open_big_local(request, datasette):
     return Response.redirect("/{}/{}".format(project_uuid, table_name))
 
 
+async def get_big_local_user(remember_token):
+    graphql_endpoint = "https://api.biglocalnews.org/graphql"
+    query = """
+    query {
+        user {
+            id
+            displayName
+            username
+            email
+        }
+    }
+    """.strip()
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            graphql_endpoint,
+            json={"query": query},
+            cookies={"remember_token": remember_token},
+            timeout=30,
+        )
+    if response.status_code != 200:
+        return None
+    return response.json()["data"]["user"]
+
+
+async def big_local_login(datasette, request):
+    if request.method == "POST":
+        post = await request.post_vars()
+        remember_token = post.get("remember_token")
+        if not remember_token:
+            return Response.redirect("/-/big-local-login")
+        # Check that the token is valid
+        actor = await get_big_local_user(remember_token)
+        if not actor:
+            return Response.redirect("/-/big-local-login?error=invalid_token")
+        # Rename displayName to display
+        actor["display"] = actor.pop("displayName")
+        response = Response.redirect("/")
+        response.set_cookie(
+            "ds_actor",
+            datasette.sign({"a": actor}, "actor"),
+        )
+        return response
+    return Response.html(
+        await datasette.render_template(
+            "big_local_login.html",
+            request=request,
+        )
+    )
+
+
 @hookimpl
 def register_routes():
-    return [(r"^/-/open-big-local", open_big_local)]
+    return [
+        (r"^/-/open-big-local$", open_big_local),
+        (r"^/-/big-local-login$", big_local_login),
+    ]
 
 
 @hookimpl

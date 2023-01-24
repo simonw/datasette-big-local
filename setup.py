@@ -30,6 +30,10 @@ setup(
     entry_points={"datasette": ["big_local = datasette_big_local"]},
     install_requires=["datasette"],
     extras_require={"test": ["pytest", "pytest-asyncio"]},
-    tests_require=["datasette-big-local[test]"],
-    python_requires=">=3.6",
+    package_data={
+        "datasette_big_local": [
+            "templates/*.html",
+        ]
+    },
+    python_requires=">=3.7",
 )
