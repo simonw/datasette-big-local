@@ -1,6 +1,3 @@
-import graphlib
-from http import cookies
-from time import time
 from cachetools import TTLCache
 from datasette import hookimpl
 from datasette.database import Database
