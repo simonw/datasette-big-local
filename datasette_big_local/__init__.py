@@ -5,6 +5,7 @@ from datasette.utils.asgi import Response
 import base64
 import html
 import httpx
+import pathlib
 import csv
 import sqlite_utils
 from sqlite_utils.utils import TypeTracker
@@ -161,7 +162,7 @@ def open_project_file(project_id, filename, remember_token):
     )
 
 
-async def open_big_local(request, datasette):
+async def big_local_open(request, datasette):
     if request.method == "GET":
         return Response.html(
             """
@@ -188,6 +189,9 @@ async def open_big_local(request, datasette):
     project_id = post["project_id"]
     remember_token = post["remember_token"]
 
+    plugin_config = datasette.plugin_config("datasette-big-local") or {}
+    root_dir = pathlib.Path(plugin_config.get("root_dir") or ".")
+
     # Use GraphQL to check permissions and get the signed URL for this resource
     try:
         uri, etag, length = open_project_file(project_id, filename, remember_token)
@@ -206,10 +210,9 @@ async def open_big_local(request, datasette):
         db = datasette.get_database(project_uuid)
     except KeyError:
         # Create empty file
-        sqlite_utils.Database("{}.db".format(project_uuid)).vacuum()
-        db = datasette.add_database(
-            Database(datasette, path="{}.db".format(project_uuid), is_mutable=True)
-        )
+        db_path = str(root_dir / "{}.db".format(project_uuid))
+        sqlite_utils.Database(db_path).vacuum()
+        db = datasette.add_database(Database(datasette, path=db_path, is_mutable=True))
     # uri is valid, do we have the table already?
     table_name = alnum_encode(filename)
 
@@ -240,7 +243,27 @@ async def open_big_local(request, datasette):
 
         # Import that CSV
         await db.execute_write_fn(import_csv, block=True)
-    return Response.redirect("/{}/{}".format(project_uuid, table_name))
+
+    response = Response.redirect("/{}/{}".format(project_uuid, table_name))
+
+    # Set a cookie so that the user can access this database in future
+    # They might be signed in already
+    if request.actor and request.actor["token"] == remember_token:
+        pass
+    else:
+        # Look up user and set cookie
+        actor = await get_big_local_user(remember_token)
+        if not actor:
+            return Response.redirect("/-/big-local-login?error=invalid_token")
+        # Rename displayName to display
+        actor["display"] = actor.pop("displayName")
+        actor["token"] = remember_token
+        response.set_cookie(
+            "ds_actor",
+            datasette.sign({"a": actor}, "actor"),
+        )
+
+    return response
 
 
 async def get_big_local_user(remember_token):
@@ -297,11 +320,11 @@ async def big_local_login(datasette, request):
 @hookimpl
 def register_routes():
     return [
-        (r"^/-/open-big-local$", open_big_local),
+        (r"^/-/big-local-open$", big_local_open),
         (r"^/-/big-local-login$", big_local_login),
     ]
 
 
 @hookimpl
 def skip_csrf(scope):
-    return scope["path"] == "/-/open-big-local"
+    return scope["path"] == "/-/big-local-open"
