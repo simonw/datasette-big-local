@@ -216,6 +216,7 @@ async def big_local_login(datasette, request):
             return Response.redirect("/-/big-local-login?error=invalid_token")
         # Rename displayName to display
         actor["display"] = actor.pop("displayName")
+        actor["token"] = remember_token
         response = Response.redirect("/")
         response.set_cookie(
             "ds_actor",
