@@ -1,6 +1,5 @@
 # datasette-big-local
 
-[![Changelog](https://img.shields.io/github/v/release/simonw/datasette-big-local?include_prereleases&label=changelog)](https://github.com/simonw/datasette-big-local/releases)
 [![Tests](https://github.com/simonw/datasette-big-local/workflows/Test/badge.svg)](https://github.com/simonw/datasette-big-local/actions?query=workflow%3ATest)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/simonw/datasette-big-local/blob/main/LICENSE)
 
