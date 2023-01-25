@@ -52,16 +52,7 @@ async def test_database_permissions(httpx_mock, scenario):
 
 
 @pytest.mark.asyncio
-async def test_open_file(httpx_mock, tmpdir):
-    ds = Datasette(
-        metadata={
-            "plugins": {
-                "datasette-big-local": {
-                    "root_dir": str(tmpdir),
-                }
-            }
-        }
-    )
+async def test_open_file(httpx_mock, ds, tmpdir):
     expected_db_path = pathlib.Path(tmpdir) / "ff0150c6-b634-472a-81b2-ef2e0c01d224.db"
     assert not expected_db_path.exists()
     assert ds.databases.keys() == {"_internal", "_memory"}
@@ -97,7 +88,6 @@ async def test_open_file(httpx_mock, tmpdir):
         json={
             "data": {
                 "user": {
-                    # id, displayName, username, email
                     "id": "1",
                     "displayName": "one",
                     "username": "one",
@@ -150,3 +140,148 @@ async def test_open_file(httpx_mock, tmpdir):
 
     # And should have created that file
     assert expected_db_path.exists()
+
+
+@pytest.fixture
+def ds(tmpdir):
+    return Datasette(
+        metadata={
+            "plugins": {
+                "datasette-big-local": {
+                    "root_dir": str(tmpdir),
+                }
+            }
+        }
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "data",
+    (
+        {
+            "project_id": "UHJvamVjdDpmZjAxNTBjNi1iNjM0LTQ3MmEtODFiMi1lZjJlMGMwMWQyMjQ=",
+            "remember_token": "",
+        },
+        {},
+        {
+            "project_id": "",
+            "remember_token": "123",
+        },
+    ),
+)
+async def test_big_local_project_bad_parameters(ds, data):
+    response = await ds.client.post(
+        "/-/big-local-project",
+        data=data,
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_big_local_project_no_permission(ds, httpx_mock):
+    # Mock both GraphQL calls
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.biglocalnews.org/graphql",
+        json={
+            "data": {
+                "user": {
+                    "id": "1",
+                    "displayName": "one",
+                    "username": "one",
+                    "email": "one@example.com",
+                }
+            }
+        },
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.biglocalnews.org/graphql",
+        json={"data": {"node": None}},
+    )
+    # Try the action
+    response = await ds.client.post(
+        "/-/big-local-project",
+        data={
+            "project_id": "UHJvamVjdDpmZjAxNTBjNi1iNjM0LTQ3MmEtODFiMi1lZjJlMGMwMWQyMjQ=",
+            "remember_token": "123",
+        },
+    )
+    assert response.status_code == 403
+    assert "Cannot access project" in response.text
+
+
+@pytest.mark.asyncio
+async def test_big_local_project(ds, httpx_mock, tmpdir):
+    # This one works, so lots of things to mock
+    assert len(tmpdir.listdir()) == 0
+    assert ds.databases.keys() == {"_internal", "_memory"}
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.biglocalnews.org/graphql",
+        json={
+            "data": {
+                "user": {
+                    "id": "1",
+                    "displayName": "one",
+                    "username": "one",
+                    "email": "one@example.com",
+                }
+            }
+        },
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.biglocalnews.org/graphql",
+        json={
+            "data": {
+                "node": {
+                    "files": {
+                        "edges": [
+                            {
+                                "node": {
+                                    "name": "universities_final.csv",
+                                    "size": 180437.0,
+                                }
+                            }
+                        ]
+                    },
+                    "id": "UHJvamVjdDpmZjAxNTBjNi1iNjM0LTQ3MmEtODFiMi1lZjJlMGMwMWQyMjQ=",
+                    "name": "universities-ppp",
+                }
+            }
+        },
+    )
+    response = await ds.client.post(
+        "/-/big-local-project",
+        data={
+            "project_id": "UHJvamVjdDpmZjAxNTBjNi1iNjM0LTQ3MmEtODFiMi1lZjJlMGMwMWQyMjQ=",
+            "remember_token": "123",
+        },
+    )
+    assert response.status_code == 302
+    assert response.headers["location"] == "/ff0150c6-b634-472a-81b2-ef2e0c01d224"
+    # Should also have set a cookie
+    ds_actor = response.headers["set-cookie"].split("=")[1].split("; ")[0]
+    assert ds.unsign(ds_actor, "actor") == {
+        "a": {
+            "id": "1",
+            "displayName": "one",
+            "username": "one",
+            "email": "one@example.com",
+            "token": "123",
+        }
+    }
+    assert len(tmpdir.listdir()) == 1
+    assert tmpdir.listdir()[0].basename == "ff0150c6-b634-472a-81b2-ef2e0c01d224.db"
+
+    # Requesting that page should see a button to import that file
+    response = await ds.client.get(
+        "/ff0150c6-b634-472a-81b2-ef2e0c01d224",
+        cookies={
+            "ds_actor": ds_actor,
+        },
+    )
+    assert response.status_code == 200
+    assert "universities_final.csv" in response.text

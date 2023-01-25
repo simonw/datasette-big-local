@@ -1,0 +1,13 @@
+{% extends "default:database.html" %}
+
+{% block content %}
+{{ super() }}
+
+{% if available_files %}
+  <h2>Import one of these project files</h2>
+  {% for file in available_files %}
+    <p>{{ file.name }}</p>
+  {% endfor %}
+{% endif %}
+
+{% endblock %}

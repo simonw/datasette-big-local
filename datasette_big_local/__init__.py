@@ -21,12 +21,15 @@ def forbidden(request, message):
     return Response.redirect("/-/big-local-login?=" + urlencode({"message": message}))
 
 
-@hookimpl
-def permission_allowed(datasette, actor, action, resource):
+def get_cache(datasette):
     cache = getattr(datasette, "big_local_cache", None)
     if cache is None:
         datasette.big_local_cache = cache = TTLCache(maxsize=100, ttl=60 * 5)
+    return cache
 
+
+@hookimpl
+def permission_allowed(datasette, actor, action, resource):
     async def inner():
         if action not in ("view-database", "execute-sql"):
             # No opinion
@@ -36,6 +39,7 @@ def permission_allowed(datasette, actor, action, resource):
             return
         if not actor:
             return False
+        cache = get_cache(datasette)
         actor_id = actor["id"]
         database_name = resource
         # Check cache to see if actor is allowed to access this database
@@ -47,40 +51,79 @@ def permission_allowed(datasette, actor, action, resource):
         remember_token = actor["token"]
 
         # Figure out project ID from UUID database name
-        project_id = base64.b64encode(
-            "Project:{}".format(database_name).encode("utf-8")
-        ).decode("utf-8")
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                "https://api.biglocalnews.org/graphql",
-                json={
-                    "variables": {"id": project_id},
-                    "query": """
-                    query Node($id: ID!) {
-                        node(id: $id) {
-                            ... on Project {
-                            id
-                            name
-                            __typename
-                            }
-                            __typename
-                        }
-                    }
-                    """,
-                },
-                cookies={"remember_token": remember_token},
-                timeout=30,
-            )
-        if response.status_code != 200:
+        project_id = project_uuid_to_id(database_name)
+
+        try:
+            await get_project(project_id, remember_token)
+            result = True
+        except (ProjectPermissionError, ProjectNotFoundError):
             result = False
-        else:
-            data = response.json()["data"]
-            result = data["node"] is not None
+
         # Store in cache
         cache[key] = result
         return result
 
     return inner
+
+
+class ProjectPermissionError(Exception):
+    pass
+
+
+class ProjectNotFoundError(Exception):
+    pass
+
+
+FILES = """
+                            files(first:100) {
+                                edges {
+                                    node {
+                                        name
+                                        size
+                                    }
+                                }
+                            }
+"""
+
+
+async def get_project(project_id, remember_token, files=False):
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "https://api.biglocalnews.org/graphql",
+            json={
+                "variables": {"id": project_id},
+                "query": """
+                query Node($id: ID!) {
+                    node(id: $id) {
+                        ... on Project {
+                            id
+                            name
+                            FILES
+                        }
+                    }
+                }
+                """.replace(
+                    "FILES", FILES if files else ""
+                ),
+            },
+            cookies={"remember_token": remember_token},
+            timeout=30,
+        )
+    if response.status_code != 200:
+        raise ProjectPermissionError(response.text)
+    else:
+        data = response.json()["data"]
+        if data["node"] is None:
+            raise ProjectNotFoundError("Project not found")
+    project = data["node"]
+    # Clean up the files nested data
+    import json
+
+    print(json.dumps(project, indent=4))
+    if files:
+        files_edges = project.pop("files")
+        project["files"] = [edge["node"] for edge in files_edges["edges"]]
+    return project
 
 
 def alnum_encode(s):
@@ -160,6 +203,30 @@ async def open_project_file(project_id, filename, remember_token):
     )
 
 
+def project_id_to_uuid(project_id):
+    return base64.b64decode(project_id).decode("utf-8").split("Project:")[-1]
+
+
+def project_uuid_to_id(project_uuid):
+    return base64.b64encode("Project:{}".format(project_uuid).encode("utf-8")).decode(
+        "utf-8"
+    )
+
+
+def ensure_database(datasette, project_uuid):
+    # Create a database of that name if one does not exist already
+    try:
+        db = datasette.get_database(project_uuid)
+    except KeyError:
+        plugin_config = datasette.plugin_config("datasette-big-local") or {}
+        root_dir = pathlib.Path(plugin_config.get("root_dir") or ".")
+        # Create empty file
+        db_path = str(root_dir / "{}.db".format(project_uuid))
+        sqlite_utils.Database(db_path).vacuum()
+        db = datasette.add_database(Database(datasette, path=db_path, is_mutable=True))
+    return db
+
+
 async def big_local_open(request, datasette):
     if request.method == "GET":
         return Response.html(
@@ -186,8 +253,10 @@ async def big_local_open(request, datasette):
     project_id = post["project_id"]
     remember_token = post["remember_token"]
 
-    plugin_config = datasette.plugin_config("datasette-big-local") or {}
-    root_dir = pathlib.Path(plugin_config.get("root_dir") or ".")
+    # Turn project ID into a UUID
+    project_uuid = project_id_to_uuid(project_id)
+
+    db = ensure_database(datasette, project_uuid)
 
     # Use GraphQL to check permissions and get the signed URL for this resource
     try:
@@ -199,17 +268,6 @@ async def big_local_open(request, datasette):
             "Could not open file: {}".format(html.escape(str(e))), status=400
         )
 
-    # Turn project ID into a UUID
-    project_uuid = base64.b64decode(project_id).decode("utf-8").split("Project:")[-1]
-
-    # Create a database of that name if one does not exist already
-    try:
-        db = datasette.get_database(project_uuid)
-    except KeyError:
-        # Create empty file
-        db_path = str(root_dir / "{}.db".format(project_uuid))
-        sqlite_utils.Database(db_path).vacuum()
-        db = datasette.add_database(Database(datasette, path=db_path, is_mutable=True))
     # uri is valid, do we have the table already?
     table_name = alnum_encode(filename)
 
@@ -307,10 +365,82 @@ async def big_local_login(datasette, request):
     )
 
 
+async def big_local_project(datasette, request):
+    if request.method == "GET":
+        return Response.html(
+            """
+        <form action="/-/big-local-open" method="POST">
+            <p><label>Project ID: <input name="project_id" value="UHJvamVjdDpmZjAxNTBjNi1iNjM0LTQ3MmEtODFiMi1lZjJlMGMwMWQyMjQ="></label></p>
+            <p><label>Filename: <input name="filename" value="universities_final.csv"></label></p>
+            <p><label>remember_token: <input name="remember_token" value=""></label></p>
+            <p><input type="submit"></p>
+        </form>
+        """
+        )
+    post = await request.post_vars()
+    bad_keys = [key for key in ("project_id", "remember_token") if not post.get(key)]
+    if bad_keys:
+        return Response.html(
+            "project_id and remember_token POST variables are required",
+            status=400,
+        )
+
+    project_id = post["project_id"]
+    remember_token = post["remember_token"]
+
+    actor = None
+    should_set_cookie = False
+    if request.actor and (request.actor["token"] == remember_token):
+        # Does the token match the current actor's token?
+        actor = request.actor
+    else:
+        # Check remember_token is for a valid actor
+        actor = await get_big_local_user(remember_token)
+        if not actor:
+            return Response.html("<h1>Invalid token</h1>", status=403)
+        actor["token"] = remember_token
+        should_set_cookie = True
+
+    # Can the actor access the project?
+    try:
+        project = await get_project(project_id, actor["token"], True)
+    except (ProjectPermissionError, ProjectNotFoundError):
+        return Response.html("<h1>Cannot access project</h1>", status=403)
+
+    # Figure out UUID for project
+    project_uuid = project_id_to_uuid(project_id)
+
+    # Stash project files in the cache
+    cache = get_cache(datasette)
+    cache_key = "project-files-{}".format(project_id)
+    cache[cache_key] = project["files"]
+
+    # Ensure database for project exists
+    ensure_database(datasette, project_uuid)
+
+    # Redirect user
+    response = Response.redirect("/{}".format(project_uuid))
+    if should_set_cookie:
+        response.set_cookie(
+            "ds_actor",
+            datasette.sign({"a": actor}, "actor"),
+        )
+    return response
+
+
+@hookimpl
+def extra_template_vars(datasette, view_name, database):
+    if view_name == "database":
+        cache = get_cache(datasette)
+        cache_key = "project-files-{}".format(project_uuid_to_id(database))
+        return {"available_files": cache.get(cache_key, [])}
+
+
 @hookimpl
 def register_routes():
     return [
         (r"^/-/big-local-open$", big_local_open),
+        (r"^/-/big-local-project$", big_local_project),
         (r"^/-/big-local-login$", big_local_login),
     ]
 
