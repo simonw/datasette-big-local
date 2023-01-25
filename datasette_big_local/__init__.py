@@ -42,10 +42,8 @@ def permission_allowed(datasette, actor, action, resource):
         key = (actor_id, database_name)
         result = cache.get(key)
         if result is not None:
-            print("From cache for {}: {}".format(key, result))
             return result
         # Not cached - hit GraphQL API and cache the result
-        print("Not cached for {}".format(key))
         remember_token = actor["token"]
 
         # Figure out project ID from UUID database name
@@ -73,7 +71,6 @@ def permission_allowed(datasette, actor, action, resource):
                 cookies={"remember_token": remember_token},
                 timeout=30,
             )
-            print(response, response.text)
         if response.status_code != 200:
             result = False
         else:
@@ -176,7 +173,6 @@ async def big_local_open(request, datasette):
         """
         )
     post = await request.post_vars()
-    print(post)
     bad_keys = [
         key for key in ("filename", "project_id", "remember_token") if not post.get(key)
     ]
@@ -203,8 +199,6 @@ async def big_local_open(request, datasette):
             "Could not open file: {}".format(html.escape(str(e))), status=400
         )
 
-    print(uri, etag, length)
-
     # Turn project ID into a UUID
     project_uuid = base64.b64decode(project_id).decode("utf-8").split("Project:")[-1]
 
@@ -222,24 +216,17 @@ async def big_local_open(request, datasette):
     if not await db.table_exists(table_name):
         # Fetch the CSV
         async with httpx.AsyncClient() as client:
-            print("About to get", length)
-            print(uri)
             r = await client.get(uri)
-            print("got")
             if r.status_code != 200:
                 return Response.html("Error fetching CSV")
 
         def import_csv(raw_conn):
             conn = sqlite_utils.Database(raw_conn)
-            print("Here goes insert all")
             tracker = TypeTracker()
             table = conn[table_name]
             rows = list(csv.DictReader(r.iter_lines()))
-            print("len rows = ", len(rows))
             table.insert_all(tracker.wrap(rows))
-            print("Done insertall")
             types = tracker.types
-            print("types = ", types)
             if not all(v == "text" for v in types.values()):
                 # Transform!
                 table.transform(types=types)
