@@ -1,6 +1,7 @@
 from datasette.app import Datasette
 import base64
 import json
+import pathlib
 import pytest
 
 
@@ -61,6 +62,8 @@ async def test_open_file(httpx_mock, tmpdir):
             }
         }
     )
+    expected_db_path = pathlib.Path(tmpdir) / "ff0150c6-b634-472a-81b2-ef2e0c01d224.db"
+    assert not expected_db_path.exists()
     assert ds.databases.keys() == {"_internal", "_memory"}
     # First one is GraphQL to create a link to the file
     httpx_mock.add_response(
@@ -144,3 +147,6 @@ async def test_open_file(httpx_mock, tmpdir):
     )
     assert response.status_code == 200
     assert response.json() == [{"rowid": 1, "a": 1, "b": 2, "c": 3}]
+
+    # And should have created that file
+    assert expected_db_path.exists()
