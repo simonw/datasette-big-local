@@ -11,6 +11,17 @@ Install this plugin in the same environment as Datasette, using the URL to the z
 
     datasette install https://github.com/simonw/datasette-big-local/archive/refs/heads/main.zip
 
+## Configuration
+
+This plugin takes a single plugin configuration option: the path to the directory where the databases it creates should be stored. In `metadata.yml` that looks like this:
+
+```yaml
+plugins:
+  datasette-big-local:
+    root_dir: /path/to/directory
+```
+Then start Datasette with `datasette -m metadata.yml`.
+
 ## Usage
 
 The plugin adds an endpoint at `/-/big-local-open` which can be targetted with an HTTP POST containing the following values:
