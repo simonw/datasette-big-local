@@ -320,7 +320,7 @@ async def big_local_open_implementation(request, datasette, remember_token=None)
         # Look up user and set cookie
         actor = await get_big_local_user(datasette, remember_token)
         if not actor:
-            return Response.redirect("/-/big-local-login?error=invalid_token")
+            return Response.html("Invalid token", status=400)
         # Rename displayName to display
         actor["display"] = actor.pop("displayName")
         actor["token"] = remember_token
@@ -354,33 +354,6 @@ async def get_big_local_user(datasette, remember_token):
     if response.status_code != 200:
         return None
     return response.json()["data"]["user"]
-
-
-async def big_local_login(datasette, request):
-    if request.method == "POST":
-        post = await request.post_vars()
-        remember_token = post.get("remember_token")
-        if not remember_token:
-            return Response.redirect("/-/big-local-login")
-        # Check that the token is valid
-        actor = await get_big_local_user(datasette, remember_token)
-        if not actor:
-            return Response.redirect("/-/big-local-login?error=invalid_token")
-        # Rename displayName to display
-        actor["display"] = actor.pop("displayName")
-        actor["token"] = remember_token
-        response = Response.redirect("/")
-        response.set_cookie(
-            "ds_actor",
-            datasette.sign({"a": actor}, "actor"),
-        )
-        return response
-    return Response.html(
-        await datasette.render_template(
-            "big_local_login.html",
-            request=request,
-        )
-    )
 
 
 async def big_local_project(datasette, request):
@@ -484,7 +457,6 @@ def register_routes():
         (r"^/-/big-local-open$", big_local_open),
         (r"^/-/big-local-open-private$", big_local_open_private),
         (r"^/-/big-local-project$", big_local_project),
-        (r"^/-/big-local-login$", big_local_login),
     ]
 
 
