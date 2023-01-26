@@ -108,7 +108,13 @@ The page could contain something like this:
   <input type="submit" value="Visit this page in Datasette">
 </form>
 <script>
-document.querySelector('form').submit();
+var remember_token = document.cookie.split(';').find(
+    c => c.trim().startsWith('remember_token=')
+)?.split('=')[1];
+if (remember_token) {
+    document.querySelector('input[name="remember_token"]').value = remember_token;
+    document.querySelector('form').submit();
+}
 </script>
 ```
 This will ensure that users who have bookmarked or shared links to pages in Datasette will be able to access those pages, provided they have the cookie on Big Local News that gives them access to that project.
