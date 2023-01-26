@@ -15,8 +15,16 @@ def non_mocked_hosts():
 @pytest.mark.parametrize(
     "scenario", ("logged_out", "logged_in_permission", "logged_in_no_permission")
 )
-async def test_database_permissions(httpx_mock, scenario):
-    ds = Datasette()
+@pytest.mark.parametrize(
+    "login_redirect_url", (None, "https://biglocalnews.dev/datasette?")
+)
+async def test_database_permissions(httpx_mock, scenario, login_redirect_url):
+    expected_redirect_url = "https://biglocalnews.org/#/datasette?"
+    config = {}
+    if login_redirect_url:
+        config["login_redirect_url"] = login_redirect_url
+        expected_redirect_url = login_redirect_url
+    ds = Datasette(metadata={"plugins": {"datasette-big-local": config}})
     ds.add_memory_database("ff0150c6-b634-472a-81b2-ef2e0c01d224")
     if scenario == "logged_out":
         ds_cookies = {}
@@ -37,11 +45,21 @@ async def test_database_permissions(httpx_mock, scenario):
     )
     if scenario == "logged_out":
         assert response.status_code == 302
+        assert response.headers["location"] == (
+            expected_redirect_url
+            + "redirect_path=%2Fff0150c6-b634-472a-81b2-ef2e0c01d224"
+            "&project_id=UHJvamVjdDpmZjAxNTBjNi1iNjM0LTQ3MmEtODFiMi1lZjJlMGMwMWQyMjQ%3D"
+        )
     else:
         if scenario == "logged_in_permission":
             assert response.status_code == 200
         elif scenario == "logged_in_no_permission":
             assert response.status_code == 302
+            assert response.headers["location"] == (
+                expected_redirect_url
+                + "redirect_path=%2Fff0150c6-b634-472a-81b2-ef2e0c01d224"
+                "&project_id=UHJvamVjdDpmZjAxNTBjNi1iNjM0LTQ3MmEtODFiMi1lZjJlMGMwMWQyMjQ%3D"
+            )
         # Either way, should have been a GraphQL call
         request = httpx_mock.get_request()
 

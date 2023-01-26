@@ -23,9 +23,37 @@ ALLOWED = "abcdefghijklmnopqrstuvwxyz" "ABCDEFGHIJKLMNOPQRSTUVWXYZ" "0123456789"
 split_re = re.compile("(_[0-9a-f]+_)")
 
 
+class Settings:
+    def __init__(self, root_dir, graphql_url, csv_size_limit_mb, login_redirect_url):
+        self.root_dir = root_dir
+        self.graphql_url = graphql_url
+        self.csv_size_limit_mb = csv_size_limit_mb
+        self.login_redirect_url = login_redirect_url
+
+
+def get_settings(datasette):
+    plugin_config = datasette.plugin_config("datasette-big-local") or {}
+    return Settings(
+        root_dir=plugin_config.get("root_dir") or ".",
+        graphql_url=plugin_config.get("graphql_url")
+        or "https://api.biglocalnews.org/graphql",
+        csv_size_limit_mb=plugin_config.get("csv_size_limit_mb") or 100,
+        login_redirect_url=plugin_config.get("login_redirect_url")
+        or "https://biglocalnews.org/#/datasette?",
+    )
+
+
 @hookimpl
-def forbidden(request, message):
-    return Response.redirect("/-/big-local-login?=" + urlencode({"message": message}))
+def forbidden(request, datasette):
+    database_name = request.url_vars["database"]
+    project_id = project_uuid_to_id(database_name)
+    url = get_settings(datasette).login_redirect_url + urlencode(
+        {
+            "redirect_path": request.full_path,
+            "project_id": project_id,
+        }
+    )
+    return Response.redirect(url)
 
 
 def get_cache(datasette):
@@ -96,7 +124,7 @@ FILES = """
 async def get_project(datasette, project_id, remember_token, files=False):
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            get_graphql_endpoint(datasette),
+            get_settings(datasette).graphql_url,
             json={
                 "variables": {"id": project_id},
                 "query": """
@@ -158,18 +186,8 @@ class OpenError(Exception):
     pass
 
 
-def get_graphql_endpoint(datasette):
-    plugin_config = datasette.plugin_config("datasette-big-local") or {}
-    return plugin_config.get("graphql_url") or "https://api.biglocalnews.org/graphql"
-
-
-def get_size_limit_mb(datasette):
-    plugin_config = datasette.plugin_config("datasette-big-local") or {}
-    return plugin_config.get("csv_size_limit_mb") or 100
-
-
 async def open_project_file(datasette, project_id, filename, remember_token):
-    graphql_endpoint = get_graphql_endpoint(datasette)
+    graphql_endpoint = get_settings(datasette).graphql_url
     body = {
         "operationName": "CreateFileDownloadURI",
         "variables": {
@@ -232,8 +250,7 @@ def ensure_database(datasette, project_uuid):
     try:
         db = datasette.get_database(project_uuid)
     except KeyError:
-        plugin_config = datasette.plugin_config("datasette-big-local") or {}
-        root_dir = pathlib.Path(plugin_config.get("root_dir") or ".")
+        root_dir = pathlib.Path(get_settings(datasette).root_dir)
         # Create empty file
         db_path = str(root_dir / "{}.db".format(project_uuid))
         sqlite_utils.Database(db_path).vacuum()
@@ -296,7 +313,7 @@ async def big_local_open_implementation(request, datasette, remember_token=None)
             "Could not open file: {}".format(html.escape(str(e))), status=400
         )
 
-    csv_size_limit_mb = get_size_limit_mb(datasette)
+    csv_size_limit_mb = get_settings(datasette).csv_size_limit_mb
     if length > csv_size_limit_mb * 1024 * 1024:
         return Response.html(
             "File exceeds size limit of {}MB".format(csv_size_limit_mb), status=400
@@ -333,7 +350,7 @@ async def big_local_open_implementation(request, datasette, remember_token=None)
 
 
 async def get_big_local_user(datasette, remember_token):
-    graphql_endpoint = get_graphql_endpoint(datasette)
+    graphql_endpoint = get_settings(datasette).graphql_url
     query = """
     query {
         user {
@@ -441,7 +458,7 @@ def extra_template_vars(datasette, view_name, database):
             for file in files
             if file["name"].endswith(".csv")
             and alnum_encode(file["name"]) not in table_names
-            and file["size"] < get_size_limit_mb(datasette) * 1024 * 1024
+            and file["size"] < get_settings(datasette).csv_size_limit_mb * 1024 * 1024
         ]
         return {
             "available_files": available_files,

@@ -26,6 +26,9 @@ Then start Datasette with `datasette -m metadata.yml`.
 
 - `graphql_url` - the URL to the GraphQL API that this communicates with. This defaults to `https://api.biglocalnews.org/graphql` - you can change this to point at a development instance.
 - `csv_size_limit_mb` - the maximum size of CSV file that can be imported, as an integer number of MBs. This defaults to 100MB.
+- `login_redirect_url` - the URL that users should be redirected to if they do not have permission to access as page. This will have `project_id=...&redirect_path=/...` appended to it - so it should end in either a `?` or a `#`. This defaults to `https://biglocalnews.org/#/datasette?`.
+
+Example `metadata.yml` with all of these options:
 
 ```yaml
 plugins:
@@ -33,6 +36,7 @@ plugins:
     root_dir: /path/to/directory
     graphql_url: https://api.biglocalnews.dev/graphql
     csv_size_limit_mb: 50
+    login_redirect_url: https://biglocalnews.dev/#/datasette
 ```
 
 ## Endpoints
