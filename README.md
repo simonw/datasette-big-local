@@ -117,6 +117,11 @@ if (remember_token) {
     document.querySelector('input[name="redirect_path"]').value = params.get('redirect_path');
     document.querySelector('input[name="remember_token"]').value = remember_token;
     document.querySelector('form').submit();
+} else {
+    // Redirect the user through the Big Local login flow, such that they will be redirected back
+    // to this page when they have signed in
+    let redirect_to = location.href;
+    location.href = '... whatever this needs to be ...';
 }
 </script>
 ```
