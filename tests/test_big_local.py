@@ -279,7 +279,7 @@ async def test_big_local_project(ds, httpx_mock, tmpdir):
     assert ds.unsign(ds_actor, "actor") == {
         "a": {
             "id": "1",
-            "displayName": "one",
+            "display": "one",
             "username": "one",
             "email": "one@example.com",
             "token": "123",

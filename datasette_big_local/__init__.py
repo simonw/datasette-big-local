@@ -241,11 +241,16 @@ async def big_local_open_private(request, datasette):
     # Same as big_local_open but reads remember_token from a cookie
     if not request.actor or not request.actor.get("token"):
         return Response.text("Forbidden", status=403)
-    print(request.actor)
-    return await big_local_open(request, datasette, request.actor["token"])
+    return await big_local_open_implementation(
+        request, datasette, request.actor["token"]
+    )
 
 
-async def big_local_open(request, datasette, remember_token=None):
+async def big_local_open(request, datasette):
+    return await big_local_open_implementation(request, datasette)
+
+
+async def big_local_open_implementation(request, datasette, remember_token=None):
     if request.method == "GET":
         return Response.html(
             """
@@ -549,7 +554,7 @@ def fetch_and_insert_csv_in_thread(task_id, url, database, table_name, loop):
                 lambda conn: sqlite_utils.Database(conn)["_import_progress_"].update(
                     task_id, data
                 ),
-                block=False,
+                block=True,
             ),
             loop=loop,
         )
@@ -560,7 +565,7 @@ def fetch_and_insert_csv_in_thread(task_id, url, database, table_name, loop):
                 lambda conn: sqlite_utils.Database(conn)[table_name].insert_all(
                     docs, alter=True
                 ),
-                block=False,
+                block=True,
             ),
             loop=loop,
         )
