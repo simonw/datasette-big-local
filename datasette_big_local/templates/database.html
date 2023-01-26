@@ -5,9 +5,18 @@
 
 {% if available_files %}
   <h2>Import one of these project files</h2>
+  <ul>
   {% for file in available_files %}
-    <p>{{ file.name }}</p>
+    <li style="margin-bottom: 0.5em">
+      <form action="/-/big-local-open-private" method="POST">
+        <input type="hidden" name="filename" value="{{ file.name }}">
+        <input type="hidden" name="project_id" value="{{ project_id }}">
+        <input type="submit" value="{{ file.name }}"> - {{ file.size|filesizeformat }}
+        <input type="hidden" name="csrftoken" value="{{ csrftoken() }}">
+      </form>
+    </li>
   {% endfor %}
+  </ul>
 {% endif %}
 
 {% endblock %}

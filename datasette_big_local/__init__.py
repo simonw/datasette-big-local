@@ -237,7 +237,15 @@ def ensure_database(datasette, project_uuid):
     return db
 
 
-async def big_local_open(request, datasette):
+async def big_local_open_private(request, datasette):
+    # Same as big_local_open but reads remember_token from a cookie
+    if not request.actor or not request.actor.get("token"):
+        return Response.text("Forbidden", status=403)
+    print(request.actor)
+    return await big_local_open(request, datasette, request.actor["token"])
+
+
+async def big_local_open(request, datasette, remember_token=None):
     if request.method == "GET":
         return Response.html(
             """
@@ -250,9 +258,10 @@ async def big_local_open(request, datasette):
         """
         )
     post = await request.post_vars()
-    bad_keys = [
-        key for key in ("filename", "project_id", "remember_token") if not post.get(key)
-    ]
+    required_keys = ["filename", "project_id"]
+    if remember_token is None:
+        required_keys.append("remember_token")
+    bad_keys = [key for key in required_keys if not post.get(key)]
     if bad_keys:
         return Response.html(
             "filename, project_id and remember_token POST variables are required",
@@ -261,7 +270,7 @@ async def big_local_open(request, datasette):
 
     filename = post["filename"]
     project_id = post["project_id"]
-    remember_token = post["remember_token"]
+    remember_token = remember_token or post["remember_token"]
 
     # Turn project ID into a UUID
     project_uuid = project_id_to_uuid(project_id)
@@ -363,9 +372,8 @@ async def big_local_project(datasette, request):
     if request.method == "GET":
         return Response.html(
             """
-        <form action="/-/big-local-open" method="POST">
+        <form action="/-/big-local-project" method="POST">
             <p><label>Project ID: <input name="project_id" value="UHJvamVjdDpmZjAxNTBjNi1iNjM0LTQ3MmEtODFiMi1lZjJlMGMwMWQyMjQ="></label></p>
-            <p><label>Filename: <input name="filename" value="universities_final.csv"></label></p>
             <p><label>remember_token: <input name="remember_token" value=""></label></p>
             <p><input type="submit"></p>
         </form>
@@ -392,6 +400,7 @@ async def big_local_project(datasette, request):
         actor = await get_big_local_user(datasette, remember_token)
         if not actor:
             return Response.html("<h1>Invalid token</h1>", status=403)
+        actor["display"] = actor.pop("displayName")
         actor["token"] = remember_token
         should_set_cookie = True
 
@@ -424,16 +433,36 @@ async def big_local_project(datasette, request):
 
 @hookimpl
 def extra_template_vars(datasette, view_name, database):
-    if view_name == "database":
+    async def inner():
+        if view_name != "database":
+            return {}
         cache = get_cache(datasette)
         cache_key = "project-files-{}".format(project_uuid_to_id(database))
-        return {"available_files": cache.get(cache_key, [])}
+        files = cache.get(cache_key) or []
+        if not files:
+            return {}
+        # Filter out just the CSVs that have not yet been imported
+        db = datasette.get_database(database)
+        table_names = set(await db.table_names())
+        available_files = [
+            file
+            for file in files
+            if file["name"].endswith(".csv")
+            and alnum_encode(file["name"]) not in table_names
+        ]
+        return {
+            "available_files": available_files,
+            "project_id": project_uuid_to_id(database),
+        }
+
+    return inner
 
 
 @hookimpl
 def register_routes():
     return [
         (r"^/-/big-local-open$", big_local_open),
+        (r"^/-/big-local-open-private$", big_local_open_private),
         (r"^/-/big-local-project$", big_local_project),
         (r"^/-/big-local-login$", big_local_login),
     ]
@@ -441,7 +470,7 @@ def register_routes():
 
 @hookimpl
 def skip_csrf(scope):
-    return scope["path"] == "/-/big-local-open"
+    return scope["path"] in ("/-/big-local-open", "/-/big-local-project")
 
 
 async def import_csv(db, url, table_name):
