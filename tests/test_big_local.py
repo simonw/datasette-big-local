@@ -53,9 +53,7 @@ async def test_database_permissions(httpx_mock, scenario):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "graphql_url", (None, "https://api.biglocalnews.dev/graphql")
-)
+@pytest.mark.parametrize("graphql_url", (None, "https://api.biglocalnews.dev/graphql"))
 async def test_open_file(httpx_mock, ds, tmpdir, graphql_url):
     api_url = graphql_url or "https://api.biglocalnews.org/graphql"
     config = {

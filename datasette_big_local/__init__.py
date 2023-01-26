@@ -580,3 +580,74 @@ def fetch_and_insert_csv_in_thread(task_id, url, database, table_name, loop):
             ),
             loop=loop,
         )
+
+
+PROGRESS_BAR_JS = """
+const PROGRESS_BAR_CSS = `
+progress {
+    -webkit-appearance: none;
+    appearance: none;
+    border: none;
+    width: 100%;
+    height: 2em;
+    margin-top: 1em;
+    margin-bottom: 1em;
+}
+progress::-webkit-progress-bar {
+    background-color: #ddd;
+}
+progress::-webkit-progress-value {
+    background-color: #124d77;
+}
+`;
+(function() {
+    // Add CSS
+    const style = document.createElement("style");
+    style.innerHTML = PROGRESS_BAR_CSS;
+    document.head.appendChild(style);
+    // Append progress bar
+    const progress = document.createElement('progress');
+    progress.setAttribute('value', 0);
+    progress.innerHTML = 'Importing...';
+    progress.style.display = 'none';
+    const table = document.querySelector('table.rows-and-columns');
+    table.parentNode.insertBefore(progress, table);
+    console.log('progress', progress);
+
+    // Figure out the polling URL
+    let parts = location.href.split('/');
+    let table_name = parts.pop();
+    parts.push("_import_progress_.json");
+    let pollUrl = parts.join('/') + (
+        '?_col=bytes_todo&_col=bytes_done&table=' + table_name +
+        '&_sort_desc=started&_shape=array&_size=1'
+    );
+
+    // Start polling
+    let first = true;
+    function pollNext() {
+        fetch(pollUrl).then(r => r.json()).then(d => {
+            let current = d[0].bytes_done;
+            let total = d[0].bytes_todo;
+            if (first) {
+                progress.setAttribute('max', total);
+                progress.style.display = 'block';
+                first = false;
+            }
+            progress.setAttribute('value', current);
+            if (current < total) {
+                setTimeout(pollNext, 2000);
+            } else {
+                progress.parentNode.removeChild(progress);
+            }
+        });
+    }
+    pollNext();
+})();
+"""
+
+
+@hookimpl
+def extra_body_script(view_name):
+    if view_name == "table":
+        return PROGRESS_BAR_JS
