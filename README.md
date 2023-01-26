@@ -35,21 +35,44 @@ plugins:
     csv_size_limit_mb: 50
 ```
 
-## Usage
+## Endpoints
 
-The plugin adds an endpoint at `/-/big-local-open` which can be targetted with an HTTP POST containing the following values:
+This plugin adds some endpoints which are designed to be called from the Big Local News web application.
 
-- `project_id` - the Base 64 encoded ID of a project on Big Local
-- `filename` - the name of a CSV file within that project
-- `remember_token` - a Big Local authentication token for the user who is opening that file
+### /-/big-local-open
 
-If the `remember_token` is valid for accessing that project, Datasette will fetch the content of that CSV file and import it into a SQLite database.
+When a user clicks "open in Datasette" on a CSV file within Big Local, their browser should submit an HTTP POST to this endpoint with the three following form parameters:
+
+- `project_id` - the Base 64 encoded ID of the project on Big Local, e.g. `UHJvamVjdDpmZjAxNTBjNi1iNjM0LTQ3MmEtODFiMi1lZjJlMGMwMWQyMjQ=`
+- `filename` - the name of the CSV file within that project, e.g. `universities_final.csv`
+- `remember_token` - a Big Local authentication token for the user who is opening that file - the same value that is stored in that user's `remember_token` cookie
+
+The endpoint will use that `remember_token` cookie to confirm that the user has access to that project.
+
+If they do, Datasette will fetch the content of the CSV file and import it into a SQLite database dedicated to that project.
 
 The database will use the UUID of the project as its name. It will be created on disk if it does not already exist.
 
 The user will also get a signed cookie signing them into the Datasette instance.
 
-The database will only be visible to users who have a cookie that confirms that they have access to the associated project.
+Datasette will cache the fact that the user has permission to access that project for five minutes. After five minutes another call will be made to the Big Local GraphQL API to confirm that the user still has permissions for that project.
+
+### /-/big-local-project
+
+There are some situations in which a user may want to open a project directly in Datasette without first selecting a file. This POST endpoint provides that capability.
+
+It takes two required form parameters:
+
+- `project_id` - the Base 64 encoded ID of the project
+- `remember_token` - a Big Local authentication token for the user
+
+And one optional parameter:
+
+- `redirect_path` - the path to redirect to after the user has been signed in. This must start with a `/` - it defaults to the database page for the project database.
+
+If the user has permission to access that project, they will be signed in and redirected to the `redirect_path`.
+
+As a convenience, this endpoint also fetches and caches a list of files within the project. Any CSV files that are within the CSV size limit and that have not been previously imported will be listed on the database page, with a button to trigger an import.
 
 ## Development
 

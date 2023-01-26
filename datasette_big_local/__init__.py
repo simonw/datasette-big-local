@@ -404,6 +404,10 @@ async def big_local_project(datasette, request):
 
     project_id = post["project_id"]
     remember_token = post["remember_token"]
+    redirect_path = post.get("redirect_path")
+
+    if redirect_path is not None and not redirect_path.startswith("/"):
+        return Response.html("redirect_path must start with /", status=400)
 
     actor = None
     should_set_cookie = False
@@ -437,7 +441,7 @@ async def big_local_project(datasette, request):
     ensure_database(datasette, project_uuid)
 
     # Redirect user
-    response = Response.redirect("/{}".format(project_uuid))
+    response = Response.redirect(redirect_path or "/{}".format(project_uuid))
     if should_set_cookie:
         response.set_cookie(
             "ds_actor",

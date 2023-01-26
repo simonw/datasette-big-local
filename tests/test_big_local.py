@@ -238,7 +238,8 @@ async def test_big_local_project_no_permission(ds, httpx_mock):
 
 
 @pytest.mark.asyncio
-async def test_big_local_project(ds, httpx_mock, tmpdir):
+@pytest.mark.parametrize("redirect_path", (None, "/foo"))
+async def test_big_local_project(ds, httpx_mock, tmpdir, redirect_path):
     # This one works, so lots of things to mock
     assert len(tmpdir.listdir()) == 0
     assert ds.databases.keys() == {"_internal", "_memory"}
@@ -269,7 +270,13 @@ async def test_big_local_project(ds, httpx_mock, tmpdir):
                                     "name": "universities_final.csv",
                                     "size": 180437.0,
                                 }
-                            }
+                            },
+                            {
+                                "node": {
+                                    "name": "universities_massive.csv",
+                                    "size": 180437000.0,
+                                }
+                            },
                         ]
                     },
                     "id": "UHJvamVjdDpmZjAxNTBjNi1iNjM0LTQ3MmEtODFiMi1lZjJlMGMwMWQyMjQ=",
@@ -278,15 +285,18 @@ async def test_big_local_project(ds, httpx_mock, tmpdir):
             }
         },
     )
-    response = await ds.client.post(
-        "/-/big-local-project",
-        data={
-            "project_id": "UHJvamVjdDpmZjAxNTBjNi1iNjM0LTQ3MmEtODFiMi1lZjJlMGMwMWQyMjQ=",
-            "remember_token": "123",
-        },
-    )
+    post_data = {
+        "project_id": "UHJvamVjdDpmZjAxNTBjNi1iNjM0LTQ3MmEtODFiMi1lZjJlMGMwMWQyMjQ=",
+        "remember_token": "123",
+    }
+    if redirect_path:
+        post_data["redirect_path"] = redirect_path
+    response = await ds.client.post("/-/big-local-project", data=post_data)
     assert response.status_code == 302
-    assert response.headers["location"] == "/ff0150c6-b634-472a-81b2-ef2e0c01d224"
+    assert (
+        response.headers["location"] == redirect_path
+        or "/ff0150c6-b634-472a-81b2-ef2e0c01d224"
+    )
     # Should also have set a cookie
     ds_actor = response.headers["set-cookie"].split("=")[1].split("; ")[0]
     assert ds.unsign(ds_actor, "actor") == {
@@ -309,4 +319,9 @@ async def test_big_local_project(ds, httpx_mock, tmpdir):
         },
     )
     assert response.status_code == 200
-    assert "universities_final.csv" in response.text
+    assert (
+        '<input type="submit" value="universities_final.csv"> - 180.4 kB'
+        in response.text
+    )
+    # But universities_massive.csv is too big
+    assert "universities_massive.csv" not in response.text
