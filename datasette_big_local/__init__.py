@@ -464,6 +464,7 @@ def extra_template_vars(datasette, view_name, database):
             for file in files
             if file["name"].endswith(".csv")
             and alnum_encode(file["name"]) not in table_names
+            and file["size"] < get_size_limit_mb(datasette) * 1024 * 1024
         ]
         return {
             "available_files": available_files,
