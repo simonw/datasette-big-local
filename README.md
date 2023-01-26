@@ -78,6 +78,41 @@ If the user has permission to access that project, they will be signed in and re
 
 As a convenience, this endpoint also fetches and caches a list of files within the project. Any CSV files that are within the CSV size limit and that have not been previously imported will be listed on the database page, with a button to trigger an import.
 
+## Implementing login redirects
+
+The usual path for this system is that a user signs into Big Local News, finds a file in a project, clicks "open in Datasette" and is seamlessly transferred to the Datasette instance and signed in with the correct permissions.
+
+There's one other path that needs considering: what happens if a user bookmarks a link to a page within Datasette, or shares such a link with a coworker who should also have access.
+
+If a user who is not signed into the Datasette instance visits the following page:
+
+`https://the-datasette-instance.biglocalnews.org/ff0150c6-b634-472a-81b2-ef2e0c01d224/universities_5f_final_2e_csv`
+
+They will be redirected back to Big Local News, with the project ID that they attempted to access (converted from UUID to base64) and the path they are trying to visit passed as arguments in the URL.
+
+By default, that redirect will go to:
+
+`https://biglocalnews.org/#/datasette?project_id=UHJvamVjdDpmZjAxNTBjNi1iNjM0LTQ3MmEtODFiMi1lZjJlMGMwMWQyMjQ=&redirect_path=/ff0150c6-b634-472a-81b2-ef2e0c01d224/universities_5f_final_2e_csv`
+
+This can be customized using the `login_redirect_url` plugin configuration option.
+
+Big Local News should implement code that matches that URL (or some other configured URL - even a `/database.html` page would work for this), extracts the `project_id` and `redirect_path` arguments, looks up the user's `remember_token` cookie and then constructs an HTTP POST to the `/-/big-local-project` endpoint documented above.
+
+The page could contain something like this:
+
+```html
+<form action="https://the-datasette-instance.biglocalnews.org/-/big-local-project" method="post">
+  <input type="hidden" name="project_id" value="UHJvamVjdDpmZjAxNTBjNi1iNjM0LTQ3MmEtODFiMi1lZjJlMGMwMWQyMjQ=">
+  <input type="hidden" name="remember_token" value="...">
+  <input type="hidden" name="redirect_path" value="/ff0150c6-b634-472a-81b2-ef2e0c01d224/universities_5f_final_2e_csv">
+  <input type="submit" value="Visit this page in Datasette">
+</form>
+<script>
+document.querySelector('form').submit();
+</script>
+```
+This will ensure that users who have bookmarked or shared links to pages in Datasette will be able to access those pages, provided they have the cookie on Big Local News that gives them access to that project.
+
 ## Development
 
 To set up this plugin locally, first checkout the code. Then create a new virtual environment:
