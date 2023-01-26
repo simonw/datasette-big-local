@@ -1,12 +1,21 @@
+from xml.etree.ElementTree import QName
 from cachetools import TTLCache
 from datasette import hookimpl
 from datasette.database import Database
 from datasette.utils.asgi import Response
+import asyncio
 import base64
 import html
 import httpx
 import pathlib
-import csv
+
+import functools
+import urllib
+import uuid
+import csv as csv_std
+import datetime
+import threading
+
 import sqlite_utils
 from sqlite_utils.utils import TypeTracker
 from urllib.parse import urlencode
@@ -117,9 +126,6 @@ async def get_project(project_id, remember_token, files=False):
             raise ProjectNotFoundError("Project not found")
     project = data["node"]
     # Clean up the files nested data
-    import json
-
-    print(json.dumps(project, indent=4))
     if files:
         files_edges = project.pop("files")
         project["files"] = [edge["node"] for edge in files_edges["edges"]]
@@ -272,25 +278,9 @@ async def big_local_open(request, datasette):
     table_name = alnum_encode(filename)
 
     if not await db.table_exists(table_name):
-        # Fetch the CSV
-        async with httpx.AsyncClient() as client:
-            r = await client.get(uri)
-            if r.status_code != 200:
-                return Response.html("Error fetching CSV")
-
-        def import_csv(raw_conn):
-            conn = sqlite_utils.Database(raw_conn)
-            tracker = TypeTracker()
-            table = conn[table_name]
-            rows = list(csv.DictReader(r.iter_lines()))
-            table.insert_all(tracker.wrap(rows))
-            types = tracker.types
-            if not all(v == "text" for v in types.values()):
-                # Transform!
-                table.transform(types=types)
-
-        # Import that CSV
-        await db.execute_write_fn(import_csv, block=True)
+        await import_csv(db, uri, table_name)
+        # Give it a moment to create the progress table and start running
+        await asyncio.sleep(0.5)
 
     response = Response.redirect("/{}/{}".format(project_uuid, table_name))
 
@@ -448,3 +438,141 @@ def register_routes():
 @hookimpl
 def skip_csrf(scope):
     return scope["path"] == "/-/big-local-open"
+
+
+async def import_csv(db, url, table_name):
+    task_id = str(uuid.uuid4())
+
+    def insert_initial_record(conn):
+        database = sqlite_utils.Database(conn)
+        if "_import_progress_" not in database.table_names():
+            database["_import_progress_"].create(
+                {
+                    "id": str,
+                    "table": str,
+                    "bytes_todo": int,
+                    "bytes_done": int,
+                    "rows_done": int,
+                    "started": str,
+                    "completed": str,
+                },
+                pk="id",
+            )
+        database["_import_progress_"].insert(
+            {
+                "id": task_id,
+                "table": table_name,
+                "bytes_todo": None,
+                "bytes_done": 0,
+                "rows_done": 0,
+                "started": str(datetime.datetime.utcnow()),
+                "completed": None,
+            }
+        )
+
+    await db.execute_write_fn(insert_initial_record)
+
+    # We run this in a thread to avoid blocking
+    thread = threading.Thread(
+        target=functools.partial(
+            fetch_and_insert_csv_in_thread,
+            task_id,
+            url,
+            db,
+            table_name,
+            asyncio.get_event_loop(),
+        ),
+        daemon=True,
+    )
+    thread.start()
+
+
+BATCH_SIZE = 100
+
+
+def fetch_and_insert_csv_in_thread(task_id, url, database, table_name, loop):
+    bytes_todo = None
+    bytes_done = 0
+    tracker = TypeTracker()
+
+    def stream_lines():
+        nonlocal bytes_todo, bytes_done
+        with httpx.stream("GET", url) as r:
+            try:
+                bytes_todo = int(r.headers["content-length"])
+            except TypeError:
+                bytes_todo = None
+            for line in r.iter_lines():
+                bytes_done += len(line)
+                yield line
+
+    reader = csv_std.reader(stream_lines())
+    headers = next(reader)
+    docs = (dict(zip(headers, row)) for row in reader)
+
+    def update_progress(data):
+        asyncio.ensure_future(
+            database.execute_write_fn(
+                lambda conn: sqlite_utils.Database(conn)["_import_progress_"].update(
+                    task_id, data
+                ),
+                block=False,
+            ),
+            loop=loop,
+        )
+
+    def write_batch(docs):
+        asyncio.ensure_future(
+            database.execute_write_fn(
+                lambda conn: sqlite_utils.Database(conn)[table_name].insert_all(
+                    docs, alter=True
+                ),
+                block=False,
+            ),
+            loop=loop,
+        )
+
+    gathered = []
+    i = 0
+    for doc in tracker.wrap(docs):
+        gathered.append(doc)
+        i += 1
+        if len(gathered) >= BATCH_SIZE:
+            write_batch(gathered)
+            gathered = []
+            # Update progress table
+            update_progress(
+                {
+                    "rows_done": i,
+                    "bytes_todo": bytes_todo,
+                    "bytes_done": bytes_done,
+                }
+            )
+
+    if gathered:
+        # Write any remaining rows
+        write_batch(gathered)
+        gathered = []
+
+    # Mark as complete in the table
+    update_progress(
+        {
+            "rows_done": i,
+            "bytes_done": bytes_todo,
+            "completed": str(datetime.datetime.utcnow()),
+        }
+    )
+
+    # Update the table's schema types
+    types = tracker.types
+    if not all(v == "text" for v in types.values()):
+        # Transform!
+        asyncio.ensure_future(
+            database.execute_write_fn(
+                lambda conn: sqlite_utils.Database(conn)[table_name].transform(
+                    types=types
+                ),
+                block=False,
+            ),
+            loop=loop,
+        )

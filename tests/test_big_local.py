@@ -1,4 +1,5 @@
 from datasette.app import Datasette
+import asyncio
 import base64
 import json
 import pathlib
@@ -75,7 +76,7 @@ async def test_open_file(httpx_mock, ds, tmpdir):
         url="https://storage.googleapis.com/table.csv",
         headers={"ETag": "abc", "content-length": "11"},
     )
-    # Third one is to download the file
+    # # Third one is to download the file
     httpx_mock.add_response(
         method="GET",
         url="https://storage.googleapis.com/table.csv",
@@ -127,6 +128,9 @@ async def test_open_file(httpx_mock, ds, tmpdir):
     # It should also set a cookie
     response.headers["set-cookie"].startswith("ds_actor")
     ds_actor = response.headers["set-cookie"].split("=")[1].split("; ")[0]
+
+    # Wait for the background task to run
+    await asyncio.sleep(1)
 
     # Grab the JSON and check that it worked
     response = await ds.client.get(
