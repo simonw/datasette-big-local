@@ -10,7 +10,6 @@ import httpx
 import pathlib
 
 import functools
-import urllib
 import uuid
 import csv as csv_std
 import datetime
@@ -63,7 +62,7 @@ def permission_allowed(datasette, actor, action, resource):
         project_id = project_uuid_to_id(database_name)
 
         try:
-            await get_project(project_id, remember_token)
+            await get_project(datasette, project_id, remember_token)
             result = True
         except (ProjectPermissionError, ProjectNotFoundError):
             result = False
@@ -95,10 +94,10 @@ FILES = """
 """
 
 
-async def get_project(project_id, remember_token, files=False):
+async def get_project(datasette, project_id, remember_token, files=False):
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            "https://api.biglocalnews.org/graphql",
+            get_graphql_endpoint(datasette),
             json={
                 "variables": {"id": project_id},
                 "query": """
@@ -160,8 +159,13 @@ class OpenError(Exception):
     pass
 
 
-async def open_project_file(project_id, filename, remember_token):
-    graphql_endpoint = "https://api.biglocalnews.org/graphql"
+def get_graphql_endpoint(datasette):
+    plugin_config = datasette.plugin_config("datasette-big-local") or {}
+    return plugin_config.get("graphql_url") or "https://api.biglocalnews.org/graphql"
+
+
+async def open_project_file(datasette, project_id, filename, remember_token):
+    graphql_endpoint = get_graphql_endpoint(datasette)
     body = {
         "operationName": "CreateFileDownloadURI",
         "variables": {
@@ -267,7 +271,7 @@ async def big_local_open(request, datasette):
     # Use GraphQL to check permissions and get the signed URL for this resource
     try:
         uri, etag, length = await open_project_file(
-            project_id, filename, remember_token
+            datasette, project_id, filename, remember_token
         )
     except OpenError as e:
         return Response.html(
@@ -290,7 +294,7 @@ async def big_local_open(request, datasette):
         pass
     else:
         # Look up user and set cookie
-        actor = await get_big_local_user(remember_token)
+        actor = await get_big_local_user(datasette, remember_token)
         if not actor:
             return Response.redirect("/-/big-local-login?error=invalid_token")
         # Rename displayName to display
@@ -304,8 +308,8 @@ async def big_local_open(request, datasette):
     return response
 
 
-async def get_big_local_user(remember_token):
-    graphql_endpoint = "https://api.biglocalnews.org/graphql"
+async def get_big_local_user(datasette, remember_token):
+    graphql_endpoint = get_graphql_endpoint(datasette)
     query = """
     query {
         user {
@@ -335,7 +339,7 @@ async def big_local_login(datasette, request):
         if not remember_token:
             return Response.redirect("/-/big-local-login")
         # Check that the token is valid
-        actor = await get_big_local_user(remember_token)
+        actor = await get_big_local_user(datasette, remember_token)
         if not actor:
             return Response.redirect("/-/big-local-login?error=invalid_token")
         # Rename displayName to display
@@ -385,7 +389,7 @@ async def big_local_project(datasette, request):
         actor = request.actor
     else:
         # Check remember_token is for a valid actor
-        actor = await get_big_local_user(remember_token)
+        actor = await get_big_local_user(datasette, remember_token)
         if not actor:
             return Response.html("<h1>Invalid token</h1>", status=403)
         actor["token"] = remember_token
@@ -393,7 +397,7 @@ async def big_local_project(datasette, request):
 
     # Can the actor access the project?
     try:
-        project = await get_project(project_id, actor["token"], True)
+        project = await get_project(datasette, project_id, actor["token"], True)
     except (ProjectPermissionError, ProjectNotFoundError):
         return Response.html("<h1>Cannot access project</h1>", status=403)
 

@@ -53,14 +53,24 @@ async def test_database_permissions(httpx_mock, scenario):
 
 
 @pytest.mark.asyncio
-async def test_open_file(httpx_mock, ds, tmpdir):
+@pytest.mark.parametrize(
+    "graphql_url", (None, "https://api.biglocalnews.dev/graphql")
+)
+async def test_open_file(httpx_mock, ds, tmpdir, graphql_url):
+    api_url = graphql_url or "https://api.biglocalnews.org/graphql"
+    config = {
+        "root_dir": str(tmpdir),
+    }
+    if graphql_url:
+        config["graphql_url"] = graphql_url
+    ds = Datasette(metadata={"plugins": {"datasette-big-local": config}})
     expected_db_path = pathlib.Path(tmpdir) / "ff0150c6-b634-472a-81b2-ef2e0c01d224.db"
     assert not expected_db_path.exists()
     assert ds.databases.keys() == {"_internal", "_memory"}
     # First one is GraphQL to create a link to the file
     httpx_mock.add_response(
         method="POST",
-        url="https://api.biglocalnews.org/graphql",
+        url=api_url,
         json={
             "data": {
                 "createFileDownloadUri": {
@@ -85,7 +95,7 @@ async def test_open_file(httpx_mock, ds, tmpdir):
     # Fourth is to verify user to set a cookie
     httpx_mock.add_response(
         method="POST",
-        url="https://api.biglocalnews.org/graphql",
+        url=api_url,
         json={
             "data": {
                 "user": {
@@ -99,7 +109,7 @@ async def test_open_file(httpx_mock, ds, tmpdir):
     )
     # Fifth is that permission check
     httpx_mock.add_response(
-        url="https://api.biglocalnews.org/graphql",
+        url=api_url,
         json={"data": {"node": {"id": "...", "name": "Project"}}},
     )
 

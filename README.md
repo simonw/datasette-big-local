@@ -22,6 +22,15 @@ plugins:
 ```
 Then start Datasette with `datasette -m metadata.yml`.
 
+You can also add the following to point to a different GraphQL API URL. The default is `https://biglocalnews.org/graphql`:
+
+```yaml
+plugins:
+  datasette-big-local:
+    root_dir: /path/to/directory
+    graphql_url: https://api.biglocalnews.dev/graphql
+```
+
 ## Usage
 
 The plugin adds an endpoint at `/-/big-local-open` which can be targetted with an HTTP POST containing the following values:
