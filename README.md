@@ -22,13 +22,17 @@ plugins:
 ```
 Then start Datasette with `datasette -m metadata.yml`.
 
-You can also add the following to point to a different GraphQL API URL. The default is `https://biglocalnews.org/graphql`:
+### Additional plugin options
+
+- `graphql_url` - the URL to the GraphQL API that this communicates with. This defaults to `https://biglocalnews.org/graphql` - you can change this to point at a development instance.
+- `csv_size_limit_mb` - the maximum size of CSV file that can be imported, as an integer number of MBs. This defaults to 100MB.
 
 ```yaml
 plugins:
   datasette-big-local:
     root_dir: /path/to/directory
     graphql_url: https://api.biglocalnews.dev/graphql
+    csv_size_limit_mb: 50
 ```
 
 ## Usage

@@ -1,4 +1,3 @@
-from xml.etree.ElementTree import QName
 from cachetools import TTLCache
 from datasette import hookimpl
 from datasette.database import Database
@@ -164,6 +163,11 @@ def get_graphql_endpoint(datasette):
     return plugin_config.get("graphql_url") or "https://api.biglocalnews.org/graphql"
 
 
+def get_size_limit_mb(datasette):
+    plugin_config = datasette.plugin_config("datasette-big-local") or {}
+    return plugin_config.get("csv_size_limit_mb") or 100
+
+
 async def open_project_file(datasette, project_id, filename, remember_token):
     graphql_endpoint = get_graphql_endpoint(datasette)
     body = {
@@ -290,6 +294,12 @@ async def big_local_open_implementation(request, datasette, remember_token=None)
     except OpenError as e:
         return Response.html(
             "Could not open file: {}".format(html.escape(str(e))), status=400
+        )
+
+    csv_size_limit_mb = get_size_limit_mb(datasette)
+    if length > csv_size_limit_mb * 1024 * 1024:
+        return Response.html(
+            "File exceeds size limit of {}MB".format(csv_size_limit_mb), status=400
         )
 
     # uri is valid, do we have the table already?

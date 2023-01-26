@@ -54,10 +54,12 @@ async def test_database_permissions(httpx_mock, scenario):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("graphql_url", (None, "https://api.biglocalnews.dev/graphql"))
-async def test_open_file(httpx_mock, ds, tmpdir, graphql_url):
+@pytest.mark.parametrize("exceeds_size_limit", (False, True))
+async def test_open_file(httpx_mock, ds, tmpdir, graphql_url, exceeds_size_limit):
     api_url = graphql_url or "https://api.biglocalnews.org/graphql"
     config = {
         "root_dir": str(tmpdir),
+        "csv_size_limit_mb": 1,
     }
     if graphql_url:
         config["graphql_url"] = graphql_url
@@ -82,34 +84,38 @@ async def test_open_file(httpx_mock, ds, tmpdir, graphql_url):
     httpx_mock.add_response(
         method="HEAD",
         url="https://storage.googleapis.com/table.csv",
-        headers={"ETag": "abc", "content-length": "11"},
-    )
-    # # Third one is to download the file
-    httpx_mock.add_response(
-        method="GET",
-        url="https://storage.googleapis.com/table.csv",
-        content=b"a,b,c\n1,2,3",
-    )
-    # Fourth is to verify user to set a cookie
-    httpx_mock.add_response(
-        method="POST",
-        url=api_url,
-        json={
-            "data": {
-                "user": {
-                    "id": "1",
-                    "displayName": "one",
-                    "username": "one",
-                    "email": "one@example.com",
-                }
-            }
+        headers={
+            "ETag": "abc",
+            "content-length": "121321313" if exceeds_size_limit else "11",
         },
     )
-    # Fifth is that permission check
-    httpx_mock.add_response(
-        url=api_url,
-        json={"data": {"node": {"id": "...", "name": "Project"}}},
-    )
+    if not exceeds_size_limit:
+        # # Third one is to download the file
+        httpx_mock.add_response(
+            method="GET",
+            url="https://storage.googleapis.com/table.csv",
+            content=b"a,b,c\n1,2,3",
+        )
+        # Fourth is to verify user to set a cookie
+        httpx_mock.add_response(
+            method="POST",
+            url=api_url,
+            json={
+                "data": {
+                    "user": {
+                        "id": "1",
+                        "displayName": "one",
+                        "username": "one",
+                        "email": "one@example.com",
+                    }
+                }
+            },
+        )
+        # Fifth is that permission check
+        httpx_mock.add_response(
+            url=api_url,
+            json={"data": {"node": {"id": "...", "name": "Project"}}},
+        )
 
     # Now do the POST
     response = await ds.client.post(
@@ -120,6 +126,13 @@ async def test_open_file(httpx_mock, ds, tmpdir, graphql_url):
             "remember_token": "5f31b602-123",
         },
     )
+
+    # If it exceeds the size limit, return an error
+    if exceeds_size_limit:
+        assert response.status_code == 400
+        assert "File exceeds size limit of 1MB" in response.text
+        return
+
     graphql_request = httpx_mock.get_requests()[0]
     assert json.loads(graphql_request.read())["variables"] == {
         "input": {
