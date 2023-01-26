@@ -102,9 +102,9 @@ The page could contain something like this:
 
 ```html
 <form action="https://the-datasette-instance.biglocalnews.org/-/big-local-project" method="post">
-  <input type="hidden" name="project_id" value="UHJvamVjdDpmZjAxNTBjNi1iNjM0LTQ3MmEtODFiMi1lZjJlMGMwMWQyMjQ=">
-  <input type="hidden" name="remember_token" value="...">
-  <input type="hidden" name="redirect_path" value="/ff0150c6-b634-472a-81b2-ef2e0c01d224/universities_5f_final_2e_csv">
+  <input type="hidden" name="project_id" value="">
+  <input type="hidden" name="remember_token" value="">
+  <input type="hidden" name="redirect_path" value="">
   <input type="submit" value="Visit this page in Datasette">
 </form>
 <script>
@@ -112,6 +112,9 @@ var remember_token = document.cookie.split(';').find(
     c => c.trim().startsWith('remember_token=')
 )?.split('=')[1];
 if (remember_token) {
+    var params = new URLSearchParams(location.href.split("?")[1]);
+    document.querySelector('input[name="project_id"]').value = params.get('project_id');
+    document.querySelector('input[name="redirect_path"]').value = params.get('redirect_path');
     document.querySelector('input[name="remember_token"]').value = remember_token;
     document.querySelector('form').submit();
 }
